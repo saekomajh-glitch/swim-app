@@ -12,6 +12,7 @@
 
   var CLIENT_ID_KEY = "swimNotes.drive.clientId.v1";
   var LAST_SYNC_KEY = "swimNotes.drive.lastSyncAt.v1";
+  var WAS_SIGNED_IN_KEY = "swimNotes.drive.wasSignedIn.v1";
   var FOLDER_ID_KEY = "swimNotes.drive.folderId.v1";
   var FILE_ID_KEY = "swimNotes.drive.fileId.v1";
   var FOLDER_NAME = "swim";
@@ -108,10 +109,12 @@
         client_id: clientId,
         scope: SCOPE,
         callback: function (resp) {
+          state.silentAttemptInProgress = false;
           if (resp && resp.access_token) {
             state.accessToken = resp.access_token;
             state.signedIn = true;
             state.error = null;
+            safeSet(WAS_SIGNED_IN_KEY, "1");
             notify();
             syncNow();
           } else {
@@ -121,7 +124,12 @@
         },
         error_callback: function () {
           state.syncing = false;
-          state.error = "로그인이 취소되었거나 실패했습니다.";
+          // 자동(조용한) 재로그인 시도가 실패한 것뿐이면 에러 문구를 띄우지 않음 —
+          // 이 경우 사용자는 그냥 평소처럼 "Google 계정으로 로그인" 버튼을 눌러야 함
+          if (!state.silentAttemptInProgress) {
+            state.error = "로그인이 취소되었거나 실패했습니다.";
+          }
+          state.silentAttemptInProgress = false;
           notify();
         }
       });
@@ -153,7 +161,23 @@
     }
     state.accessToken = null;
     state.signedIn = false;
+    safeRemove(WAS_SIGNED_IN_KEY);
     notify();
+  }
+
+  // 이전에 로그인한 적이 있으면, 앱을 다시 열었을 때 팝업 없이 조용히 재로그인을 시도한다.
+  // (브라우저에 Google 로그인 세션이 남아있으면 성공 — 성공 시 자동으로 syncNow()까지 실행됨.
+  //  실패해도 에러 문구 없이 조용히 "로그인 필요" 상태로 남을 뿐, 평소처럼 버튼을 누르면 됨)
+  function trySilentSignIn() {
+    if (!getClientId() || safeGet(WAS_SIGNED_IN_KEY) !== "1") return;
+    if (!state.tokenClient) initTokenClient();
+    if (!state.tokenClient) return;
+    try {
+      state.silentAttemptInProgress = true;
+      state.tokenClient.requestAccessToken({ prompt: "none" });
+    } catch (e) {
+      state.silentAttemptInProgress = false;
+    }
   }
 
   // -----------------------------------------------------------------
@@ -274,9 +298,35 @@
       return !(tomb && tomb.deletedAt >= ts(e));
     });
 
+    // 같은 내용(날짜·카테고리·본문)의 기록이 서로 다른 id로 중복되는 경우를 하나로 합침.
+    // (예: 노트북·폰에서 각자 처음 실행될 때 만들어진 예시 기록은 내용은 같아도 id가 달라서
+    //  병합 시 두 개로 보일 수 있음 — 그 경우를 여기서 정리함)
+    mergedEntries = dedupeByContent(mergedEntries);
+
     var mergedTombstones = Object.keys(tombById).map(function (id) { return tombById[id]; });
 
     return { entries: mergedEntries, tombstones: mergedTombstones };
+  }
+
+  function contentKey(e) {
+    return (e.date || "") + "|" + (e.category || "") + "|" + (e.text || "").trim();
+  }
+
+  function dedupeByContent(entries) {
+    var seen = {};
+    var result = [];
+    // 가장 먼저 만들어진(createdAt이 이른) 것을 대표로 남김 — 결과는 순서 무관하게 비교됨
+    var sorted = entries.slice().sort(function (a, b) {
+      return (a.createdAt || "") < (b.createdAt || "") ? -1 : 1;
+    });
+    sorted.forEach(function (e) {
+      var key = contentKey(e);
+      if (!seen[key]) {
+        seen[key] = true;
+        result.push(e);
+      }
+    });
+    return result;
   }
 
   function syncNow() {
@@ -492,6 +542,7 @@
     waitForGis(function () {
       initTokenClient();
       notify();
+      trySilentSignIn();
     }, 15);
   }
 
@@ -509,6 +560,7 @@
     syncNow: syncNow,
     renderView: renderView,
     renderStatusBadge: renderStatusBadge,
-    mergeData: mergeData
+    mergeData: mergeData,
+    dedupeByContent: dedupeByContent
   };
 })();

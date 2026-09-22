@@ -331,6 +331,16 @@
     saveTombstones(tombstones || []);
   }
 
+  // 기록을 추가·수정·삭제한 직후 호출 — 이미 로그인되어 있으면 자동으로 동기화를 걸어준다.
+  // (로그인 전이거나 sync.js가 없으면 조용히 아무 일도 안 함 — 로컬 기능엔 영향 없음)
+  function syncSoon() {
+    try {
+      if (window.SwimSync && window.SwimSync.getStatus().signedIn) {
+        window.SwimSync.syncNow();
+      }
+    } catch (e) { /* no-op */ }
+  }
+
   function getEntry(id) {
     var entries = loadEntries();
     for (var i = 0; i < entries.length; i++) {
@@ -711,6 +721,7 @@
         onclick: function () {
           if (window.confirm("이 기록을 삭제할까요? 되돌릴 수 없습니다.")) {
             deleteEntry(entry.id);
+            syncSoon();
             navigate("#/category/" + cat.id);
           }
         }
@@ -824,9 +835,11 @@
             var date = dateInput.value || todayStr();
             if (editing) {
               updateEntry(editing.id, { date: date, category: catId, text: text });
+              syncSoon();
               navigate("#/entry/" + editing.id);
             } else {
               var entry = addEntry(date, catId, text);
+              syncSoon();
               navigate("#/entry/" + entry.id);
             }
           }
