@@ -87,6 +87,24 @@ button{ font-family:var(--font-body); }
 
 .sidebar-new-btn{ text-align:center; }
 
+/* ---------------- Sync status (Google Drive) ---------------- */
+.sync-status{ padding:0 2px; }
+.sync-status-link{
+  display:flex; align-items:center; gap:8px; font-size:12.5px; color:#B9B3A6; padding:4px 2px;
+}
+.sync-status-link:hover{ color:var(--paper); }
+.sync-dot{ width:8px; height:8px; border-radius:50%; background:#6B6659; flex-shrink:0; }
+.sync-dot-ok{ background:#4C9A6A; }
+.sync-dot-error{ background:var(--danger); }
+.sync-error{
+  background:#FBEFEC; border:1px solid #E7C9C0; color:var(--danger); border-radius:10px;
+  padding:10px 14px; font-size:13px; margin:0 0 18px;
+}
+
+.mobile-sync-status{ position:absolute; top:14px; right:16px; }
+.mobile-sync-status .sync-status-link{ color:#B9B3A6; }
+.mobile-header{ position:relative; }
+
 /* ---------------- Buttons ---------------- */
 .btn{
   display:inline-flex; align-items:center; justify-content:center; gap:6px;

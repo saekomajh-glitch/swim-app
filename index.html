@@ -22,12 +22,14 @@
       <h1 class="brand-title">수영 노트</h1>
     </div>
     <nav class="sidebar-nav" id="sidebar-nav"></nav>
+    <div class="sync-status" id="sync-status"></div>
     <a href="#/new" class="btn btn-primary btn-block sidebar-new-btn">+ 새 기록</a>
   </aside>
 
   <header class="mobile-header">
     <div class="brand-date" id="brand-date-mobile"></div>
     <h1 class="brand-title-mobile">수영 노트</h1>
+    <div class="mobile-sync-status" id="mobile-sync-status"></div>
   </header>
 
   <main class="content" id="main"></main>
@@ -38,7 +40,11 @@
 
   <nav class="mobile-bottomnav" id="mobile-bottomnav"></nav>
 </div>
+<!-- Google 로그인(Identity Services) — 동기화 기능에만 필요한 유일한 외부 스크립트.
+     인터넷이 없거나 이 스크립트를 못 불러와도 나머지 기능은 그대로 오프라인 동작함. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="app.js"></script>
+<script src="sync.js"></script>
 <script>
   (function () {
     var text = '';

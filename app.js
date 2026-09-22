@@ -9,6 +9,7 @@
 
   var STORAGE_KEY = "swimNotes.entries.v1";
   var SEEDED_KEY = "swimNotes.seeded.v1";
+  var TOMBSTONES_KEY = "swimNotes.tombstones.v1";
 
   // ---------------------------------------------------------------------
   // 카테고리 정의 (색상 · 핵심 포인트 · 자동 추천용 키워드)
@@ -259,12 +260,14 @@
 
   function addEntry(date, categoryId, text) {
     var entries = loadEntries();
+    var now = new Date().toISOString();
     var entry = {
       id: genId(),
       date: date,
       category: categoryId,
       text: text,
-      createdAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     };
     entries.push(entry);
     saveEntries(entries);
@@ -286,6 +289,46 @@
   function deleteEntry(id) {
     var entries = loadEntries().filter(function (e) { return e.id !== id; });
     saveEntries(entries);
+    addTombstone(id);
+  }
+
+  // ---------------------------------------------------------------------
+  // 삭제 흔적(tombstone) — 동기화 시 다른 기기에서 삭제한 기록이 되살아나지 않도록
+  // ---------------------------------------------------------------------
+  function loadTombstones() {
+    try {
+      var raw = window.localStorage.getItem(TOMBSTONES_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn("[swim-notes] tombstone 읽기 실패", e);
+    }
+    return [];
+  }
+
+  function saveTombstones(tombstones) {
+    try {
+      window.localStorage.setItem(TOMBSTONES_KEY, JSON.stringify(tombstones));
+      return true;
+    } catch (e) {
+      console.warn("[swim-notes] tombstone 저장 실패", e);
+      return false;
+    }
+  }
+
+  function addTombstone(id) {
+    var tombstones = loadTombstones();
+    tombstones = tombstones.filter(function (t) { return t.id !== id; });
+    tombstones.push({ id: id, deletedAt: new Date().toISOString() });
+    saveTombstones(tombstones);
+  }
+
+  // 동기화(sync.js)가 병합된 결과를 로컬에 통째로 반영할 때 사용
+  function replaceAllData(entries, tombstones) {
+    saveEntries(entries || []);
+    saveTombstones(tombstones || []);
   }
 
   function getEntry(id) {
@@ -407,6 +450,7 @@
     if (parts[0] === "entry" && parts[1]) return { view: "detail", id: parts[1] };
     if (parts[0] === "new") return { view: "new" };
     if (parts[0] === "edit" && parts[1]) return { view: "edit", id: parts[1] };
+    if (parts[0] === "sync") return { view: "sync" };
     return { view: "home" };
   }
 
@@ -427,6 +471,7 @@
     else if (route.view === "detail") renderDetailView(main, route.id);
     else if (route.view === "new") renderFormView(main, null);
     else if (route.view === "edit") renderFormView(main, route.id);
+    else if (route.view === "sync" && window.SwimSync) window.SwimSync.renderView(main);
     else renderHomeView(main);
   }
 
@@ -456,6 +501,10 @@
       ]);
       nav.appendChild(item);
     });
+
+    if (window.SwimSync) {
+      window.SwimSync.renderStatusBadge(document.getElementById("sync-status"));
+    }
   }
 
   // 폰 화면 전용 하단 내비게이션 — 사이드바와 같은 데이터(홈 · 카테고리)를 공유하되
@@ -486,6 +535,10 @@
         el("span", { class: "mobile-nav-count" }, [String(counts[cat.id] || 0)])
       ]));
     });
+
+    if (window.SwimSync) {
+      window.SwimSync.renderStatusBadge(document.getElementById("mobile-sync-status"));
+    }
   }
 
   function summaryCard(entries) {
@@ -800,6 +853,7 @@
     EXPERT_TIPS: EXPERT_TIPS,
     STORAGE_KEY: STORAGE_KEY,
     SEEDED_KEY: SEEDED_KEY,
+    TOMBSTONES_KEY: TOMBSTONES_KEY,
     loadEntries: loadEntries,
     saveEntries: saveEntries,
     addEntry: addEntry,
@@ -813,6 +867,10 @@
     render: render,
     parseHash: parseHash,
     catById: catById,
-    renderMobileNav: renderMobileNav
+    renderMobileNav: renderMobileNav,
+    loadTombstones: loadTombstones,
+    saveTombstones: saveTombstones,
+    addTombstone: addTombstone,
+    replaceAllData: replaceAllData
   };
 })();
