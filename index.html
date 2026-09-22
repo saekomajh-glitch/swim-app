@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>수영 노트</title>
+<meta name="theme-color" content="#22201C">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="수영 노트">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-date" id="brand-date"></div>
+      <h1 class="brand-title">수영 노트</h1>
+    </div>
+    <nav class="sidebar-nav" id="sidebar-nav"></nav>
+    <a href="#/new" class="btn btn-primary btn-block sidebar-new-btn">+ 새 기록</a>
+  </aside>
+
+  <header class="mobile-header">
+    <div class="brand-date" id="brand-date-mobile"></div>
+    <h1 class="brand-title-mobile">수영 노트</h1>
+  </header>
+
+  <main class="content" id="main"></main>
+
+  <a href="#/new" class="mobile-fab" aria-label="새 기록 추가">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FAF8F4" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </a>
+
+  <nav class="mobile-bottomnav" id="mobile-bottomnav"></nav>
+</div>
+<script src="app.js"></script>
+<script>
+  (function () {
+    var text = '';
+    try {
+      text = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' });
+    } catch (e) {}
+    ['brand-date', 'brand-date-mobile'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = text;
+    });
+  })();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* 오프라인/파일 실행 환경에서는 조용히 무시 */ });
+    });
+  }
+</script>
+</body>
+</html>
