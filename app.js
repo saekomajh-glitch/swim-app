@@ -331,11 +331,14 @@
     saveTombstones(tombstones || []);
   }
 
-  // 기록을 추가·수정·삭제한 직후 호출 — 이미 로그인되어 있으면 자동으로 동기화를 걸어준다.
-  // (로그인 전이거나 sync.js가 없으면 조용히 아무 일도 안 함 — 로컬 기능엔 영향 없음)
+  // 기록을 추가·수정·삭제한 직후 호출 — 동기화가 설정되어 있으면 자동으로 동기화를 걸어준다.
+  // (signedIn만 보고 판단하면, 로그인 토큰이 시간이 지나 만료된 뒤로는 계속 조용히
+  //  아무 것도 안 하게 되어 "다른 기기에 반영이 안 된다"는 버그로 이어짐. 대신
+  //  configured 여부만 보고 syncNow()를 호출하면, syncNow() 내부에서 토큰이
+  //  만료된 경우 조용히 재로그인을 시도한 뒤 이어서 동기화하므로 스스로 복구된다.)
   function syncSoon() {
     try {
-      if (window.SwimSync && window.SwimSync.getStatus().signedIn) {
+      if (window.SwimSync && window.SwimSync.getStatus().configured) {
         window.SwimSync.syncNow();
       }
     } catch (e) { /* no-op */ }

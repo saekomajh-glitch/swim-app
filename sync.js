@@ -329,19 +329,32 @@
     return result;
   }
 
-  function syncNow() {
+  // Google 로그인 접근 토큰은 보통 1시간 정도만 유효함. 만료되면 signedIn이 false로
+  // 바뀌는데, 예전엔 여기서 그냥 "로그인해주세요" 에러만 남기고 끝났음 — 그러면 앱을
+  // 계속 켜둔 채로 쓰다가 토큰이 만료된 뒤로는 자동 동기화가 계속 조용히 실패만 하고,
+  // 사용자가 직접 동기화 화면에 들어가서 재로그인하기 전까진 기기 간 반영이 전혀 안 됨.
+  // → 브라우저에 Google 로그인 세션 자체는 보통 훨씬 오래 남아있으므로, 토큰이 없거나
+  //   만료된 경우 팝업 없이 조용히 재로그인(prompt:"none")부터 한 번 시도하고,
+  //   성공하면 그 콜백이 자동으로 다시 syncNow()를 불러서 이어서 동기화한다.
+  function syncNow(_isRetryAfterReauth) {
     if (!window.SwimNotesApp) return Promise.resolve();
-    if (!state.signedIn || !state.accessToken) {
-      state.error = "먼저 로그인해주세요.";
-      notify();
-      return Promise.resolve();
-    }
     if (!isOnline()) {
       state.error = "오프라인 상태입니다. 인터넷 연결 후 다시 시도해주세요.";
       notify();
       return Promise.resolve();
     }
     if (state.syncing) return Promise.resolve();
+
+    if (!state.signedIn || !state.accessToken) {
+      if (!_isRetryAfterReauth && getClientId() && safeGet(WAS_SIGNED_IN_KEY) === "1") {
+        // 조용히 한 번 재로그인 시도 — 성공하면 tokenClient 콜백이 syncNow()를 다시 호출함
+        trySilentSignIn();
+        return Promise.resolve();
+      }
+      state.error = "먼저 로그인해주세요.";
+      notify();
+      return Promise.resolve();
+    }
 
     state.syncing = true;
     state.error = null;
@@ -367,7 +380,15 @@
       })
       .catch(function (err) {
         state.syncing = false;
-        state.error = (err && err.message) || "동기화 중 오류가 발생했습니다.";
+        var msg = (err && err.message) || "동기화 중 오류가 발생했습니다.";
+        var expired = msg.indexOf("인증이 만료") !== -1;
+        if (expired && !_isRetryAfterReauth && getClientId() && safeGet(WAS_SIGNED_IN_KEY) === "1") {
+          // 동기화 도중 토큰이 만료된 경우도 마찬가지로 조용히 재로그인 후 자동 재시도
+          notify();
+          trySilentSignIn();
+          return;
+        }
+        state.error = msg;
         notify();
       });
   }
