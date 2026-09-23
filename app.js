@@ -51,7 +51,11 @@
 
   // ---------------------------------------------------------------------
   // 기록 유형 — 통계 화면에서 "고칠점 / 개선된 점"을 따로 모아 보기 위한 태그.
-  // 기존 기록(이 필드가 없는 데이터)은 항상 "log"(일반 기록)로 취급한다.
+  // 따로 선택하게 하지 않고, 기록 본문에 자연스럽게 쓴 표현을 보고 자동으로 감지한다
+  // (예: "...가 아직 안 됨" → 고칠점, "...이 편해졌다" → 개선된 점). 한 기록 안에 잘된
+  // 점·안된 점을 같이 적으면 둘 다에 반영될 수 있다. 키워드 기반의 단순한 방식이라
+  // 완벽하지는 않지만, 카테고리 자동 추천(suggestCategory)과 같은 방식으로 앞으로
+  // 키워드를 더 다듬어갈 수 있다.
   // ---------------------------------------------------------------------
   var NOTE_TYPES = [
     { id: "log", name: "일반 기록", color: "#8C877D", tint: "#F3F0EA", border: "#E4DFD5" },
@@ -59,6 +63,29 @@
     { id: "improved", name: "개선된 점", color: "#4C9A6A", tint: "#EAF6EE", border: "#CFE8D6" }
   ];
   var DEFAULT_NOTE_TYPE = NOTE_TYPES[0].id;
+
+  var FIX_KEYWORDS = [
+    "안 됨", "안됨", "안 되고", "안 되는", "안 되어", "안되고", "안되는", "안 됨", "못 함", "못함", "못했",
+    "안 나감", "안나감", "안 맞", "안맞", "잘 안 됨", "잘안됨", "무너짐", "가라앉", "뒤로 넘어감",
+    "늦게 나감", "헷갈렸", "헷갈림", "어려웠", "어렵", "힘들었", "힘듦", "힘들다", "실수", "틀렸",
+    "안 잡힘", "안잡힘", "부담스럽", "불편했", "막힘", "안 뜸", "숨참", "버벅", "꼬였", "꼬임",
+    "자꾸 안", "여전히 안", "아직 안", "아직도 안"
+  ];
+  var IMPROVED_KEYWORDS = [
+    "편해졌", "편해짐", "좋아졌", "좋아짐", "나아졌", "나아짐", "잡혔다", "잡힘", "익숙해졌", "익숙해짐",
+    "수월해졌", "수월해짐", "자연스러워졌", "자연스러워짐", "빨라졌", "빨라짐", "늘었다", "성공",
+    "가능해졌", "가능해짐", "잘 됐", "잘됐", "해냈", "해냄", "자신감", "편안해졌", "안정됐", "안정적"
+  ];
+
+  // 본문 텍스트에서 "고칠점"/"개선된 점" 신호를 감지 — 저장된 값이 아니라 매번 텍스트를
+  // 보고 계산하므로, 예전에 이미 적어둔 기록에도 그대로(소급) 적용된다.
+  function detectSignals(text) {
+    var t = text || "";
+    return {
+      fix: FIX_KEYWORDS.some(function (k) { return t.indexOf(k) >= 0; }),
+      improved: IMPROVED_KEYWORDS.some(function (k) { return t.indexOf(k) >= 0; })
+    };
+  }
 
   // ---------------------------------------------------------------------
   // 전문가 팁 — 유튜브·기사 등에서 참고한 코칭 내용 (내가 쓴 연습 기록과 구분해서 표시)
@@ -438,14 +465,16 @@
     return { months: months, byMonth: byMonth, max: max };
   }
 
-  // 특정 기록 유형(고칠점/개선된 점)을 영법별 개수 + 최근순 목록으로 집계
+  // 특정 신호(고칠점/개선된 점)를 본문에서 감지해 영법별 개수 + 최근순 목록으로 집계.
+  // 저장된 값이 아니라 매번 텍스트를 스캔하므로, 한 기록이 고칠점·개선된 점 둘 다에
+  // 동시에 잡힐 수도 있다(둘 다 적었다면 둘 다에 반영되는 게 맞음).
   function noteTypeCategoryStats(entries, noteTypeId) {
     var counts = {};
     CATEGORIES.forEach(function (c) { counts[c.id] = 0; });
     var list = [];
     (entries || []).forEach(function (e) {
-      var nt = e.noteType || DEFAULT_NOTE_TYPE;
-      if (nt === noteTypeId) {
+      var sig = detectSignals(e.text);
+      if (sig[noteTypeId]) {
         if (counts.hasOwnProperty(e.category)) counts[e.category]++;
         list.push(e);
       }
@@ -710,12 +739,19 @@
     }
   }
 
-  // noteType이 "log"(일반 기록)이면 배지를 안 보여줌 — 대부분의 기록은 여전히 평소처럼 표시됨
-  function noteTypeBadge(entry) {
-    var ntId = entry.noteType || DEFAULT_NOTE_TYPE;
-    if (ntId === DEFAULT_NOTE_TYPE) return null;
-    var nt = noteTypeById(ntId);
-    return el("span", { class: "entry-tag note-type-tag", style: "background:" + nt.tint + ";color:" + nt.color }, [nt.name]);
+  // 본문에서 감지된 신호에 따라 배지를 0~2개 만들어 반환(둘 다 적었으면 둘 다 표시)
+  function noteTypeBadges(entry) {
+    var sig = detectSignals(entry.text);
+    var badges = [];
+    if (sig.fix) {
+      var fixType = noteTypeById("fix");
+      badges.push(el("span", { class: "entry-tag note-type-tag", style: "background:" + fixType.tint + ";color:" + fixType.color }, [fixType.name]));
+    }
+    if (sig.improved) {
+      var impType = noteTypeById("improved");
+      badges.push(el("span", { class: "entry-tag note-type-tag", style: "background:" + impType.tint + ";color:" + impType.color }, [impType.name]));
+    }
+    return badges;
   }
 
   function entryCard(entry) {
@@ -724,8 +760,8 @@
       el("span", { class: "entry-tag", style: "background:" + cat.tint + ";color:" + cat.color }, [cat.name]),
       el("span", { class: "entry-date" }, [fmtDate(entry.date)])
     ];
-    var badge = noteTypeBadge(entry);
-    if (badge) meta.splice(1, 0, badge);
+    var badges = noteTypeBadges(entry);
+    if (badges.length) { var args = [1, 0].concat(badges); Array.prototype.splice.apply(meta, args); }
     return el("a", {
       href: "#/entry/" + entry.id,
       class: "entry-card",
@@ -813,8 +849,8 @@
       el("span", { class: "entry-tag", style: "background:" + cat.tint + ";color:" + cat.color }, [cat.name]),
       el("span", { class: "entry-date" }, [fmtDate(entry.date)])
     ];
-    var detailBadge = noteTypeBadge(entry);
-    if (detailBadge) detailMeta.splice(1, 0, detailBadge);
+    var detailBadges = noteTypeBadges(entry);
+    if (detailBadges.length) { var dargs = [1, 0].concat(detailBadges); Array.prototype.splice.apply(detailMeta, dargs); }
     main.appendChild(el("div", { class: "detail-meta" }, detailMeta));
 
     var body = el("div", { class: "detail-card", style: "border-left-color:" + cat.color });
@@ -927,8 +963,11 @@
     wrap.appendChild(el("div", { class: "section-title" }, [nt.name + " · 영법별"]));
 
     if (stats.list.length === 0) {
+      var hint = noteTypeId === "fix"
+        ? "예: “아직 팔 돌릴 때 뒤로 넘어감”, “사이드킥이 잘 안 됨”처럼 안 된 점을 적으면 자동으로 여기 반영돼요."
+        : "예: “발차기가 편해졌다”, “이제 잘됨”처럼 잘된 점을 적으면 자동으로 여기 반영돼요.";
       wrap.appendChild(el("div", { class: "empty" }, [
-        "아직 “" + nt.name + "”으로 표시된 기록이 없습니다. 새 기록 작성 시 “기록 유형”에서 선택하면 여기에 자동으로 쌓여요."
+        "아직 “" + nt.name + "”으로 감지된 기록이 없습니다. 따로 선택할 필요 없이, 새 기록 본문에 " + hint
       ]));
       return wrap;
     }
@@ -1022,7 +1061,7 @@
 
     var textarea = el("textarea", {
       class: "text-input",
-      placeholder: "예: 한팔 접영 팔 돌리기가 조금 편해졌다..."
+      placeholder: "예: 한팔 접영 팔 돌리기가 조금 편해졌다. 근데 사이드킥은 아직 잘 안 됨..."
     }, [editing ? editing.text : ""]);
     textarea.value = editing ? editing.text : "";
 
@@ -1068,33 +1107,14 @@
     textarea.addEventListener("input", renderChips);
     renderChips();
 
-    // 기록 유형 — 통계 화면의 "고칠점 / 개선된 점" 집계에 쓰임. 기본은 평소처럼 "일반 기록".
-    var noteTypeId = editing ? (editing.noteType || DEFAULT_NOTE_TYPE) : DEFAULT_NOTE_TYPE;
-    var typeChipRow = el("div", { class: "chip-row" });
-    function renderTypeChips() {
-      typeChipRow.innerHTML = "";
-      NOTE_TYPES.forEach(function (nt) {
-        var active = nt.id === noteTypeId;
-        typeChipRow.appendChild(el("button", {
-          type: "button",
-          class: "chip" + (active ? " chip-active" : ""),
-          style: active ? ("background:" + nt.color + ";border-color:" + nt.color) : "",
-          onclick: function () { noteTypeId = nt.id; renderTypeChips(); }
-        }, [nt.name]));
-      });
-    }
-    renderTypeChips();
-
     var form = el("div", { class: "entry-form" }, [
       el("label", { class: "field-label" }, ["날짜"]),
       dateInput,
-      el("label", { class: "field-label" }, ["오늘 배운 내용"]),
+      el("label", { class: "field-label" }, ["오늘 배운 내용 (잘된 점 · 안된 점을 함께 적으면 통계에 자동으로 반영돼요)"]),
       textarea,
       el("label", { class: "field-label" }, ["카테고리 (자동 추천 · 직접 선택 가능)"]),
       chipRow,
       statusLine,
-      el("label", { class: "field-label" }, ["기록 유형 (선택 — 통계 화면에 자동으로 반영됨)"]),
-      typeChipRow,
       el("div", { class: "form-actions" }, [
         el("button", {
           class: "btn btn-primary btn-large",
@@ -1108,11 +1128,11 @@
             var catId = currentActiveId();
             var date = dateInput.value || todayStr();
             if (editing) {
-              updateEntry(editing.id, { date: date, category: catId, text: text, noteType: noteTypeId });
+              updateEntry(editing.id, { date: date, category: catId, text: text });
               syncSoon();
               navigate("#/entry/" + editing.id);
             } else {
-              var entry = addEntry(date, catId, text, noteTypeId);
+              var entry = addEntry(date, catId, text);
               syncSoon();
               navigate("#/entry/" + entry.id);
             }
@@ -1157,6 +1177,7 @@
     parseHash: parseHash,
     catById: catById,
     noteTypeById: noteTypeById,
+    detectSignals: detectSignals,
     monthKey: monthKey,
     monthLabel: monthLabel,
     monthlyCategoryStats: monthlyCategoryStats,

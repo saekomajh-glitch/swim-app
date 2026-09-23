@@ -301,9 +301,21 @@
     // 같은 내용(날짜·카테고리·본문)의 기록이 서로 다른 id로 중복되는 경우를 하나로 합침.
     // (예: 노트북·폰에서 각자 처음 실행될 때 만들어진 예시 기록은 내용은 같아도 id가 달라서
     //  병합 시 두 개로 보일 수 있음 — 그 경우를 여기서 정리함)
-    mergedEntries = dedupeByContent(mergedEntries);
+    var dedup = dedupeByContent(mergedEntries);
+    mergedEntries = dedup.kept;
 
     var mergedTombstones = Object.keys(tombById).map(function (id) { return tombById[id]; });
+
+    // 내용이 같아서 이번에 걸러낸 항목은 "이번 결과에서만" 빼면 안 됨 — tombstone 없이 그냥
+    // 빼기만 하면, 나중에 남은 쪽 기록의 내용을 수정해서 더 이상 내용이 똑같지 않게 되는 순간
+    // 걸러졌던 옛날 버전이 "새로 생긴 기록"처럼 다시 나타나 버림(수정했는데 개수가 늘어나는
+    // 버그의 원인). 그래서 여기서 걸러진 id는 tombstone으로 영구 확정해서, 이후 내용이
+    // 달라지더라도 다시는 살아나지 않게 한다.
+    dedup.droppedIds.forEach(function (id) {
+      if (!tombById[id]) {
+        mergedTombstones.push({ id: id, deletedAt: new Date().toISOString() });
+      }
+    });
 
     return { entries: mergedEntries, tombstones: mergedTombstones };
   }
@@ -312,9 +324,11 @@
     return (e.date || "") + "|" + (e.category || "") + "|" + (e.text || "").trim();
   }
 
+  // 반환값: { kept: 대표로 남긴 기록 목록, droppedIds: 중복으로 판정되어 빠진 기록들의 id }
   function dedupeByContent(entries) {
     var seen = {};
-    var result = [];
+    var kept = [];
+    var droppedIds = [];
     // 가장 먼저 만들어진(createdAt이 이른) 것을 대표로 남김 — 결과는 순서 무관하게 비교됨
     var sorted = entries.slice().sort(function (a, b) {
       return (a.createdAt || "") < (b.createdAt || "") ? -1 : 1;
@@ -323,10 +337,12 @@
       var key = contentKey(e);
       if (!seen[key]) {
         seen[key] = true;
-        result.push(e);
+        kept.push(e);
+      } else {
+        droppedIds.push(e.id);
       }
     });
-    return result;
+    return { kept: kept, droppedIds: droppedIds };
   }
 
   // Google 로그인 접근 토큰은 보통 1시간 정도만 유효함. 만료되면 signedIn이 false로
