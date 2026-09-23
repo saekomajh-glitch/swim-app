@@ -4,7 +4,7 @@
  * file:// 등 서비스 워커를 지원하지 않는 환경에서는 index.html의 등록 코드가
  * 조용히 무시하도록 되어 있으므로 이 파일 자체는 항상 존재해도 안전함.
  */
-var CACHE_NAME = "swim-notes-shell-v4";
+var CACHE_NAME = "swim-notes-shell-v5";
 var APP_SHELL = [
   "./",
   "./index.html",
@@ -37,20 +37,26 @@ self.addEventListener("activate", function (event) {
   self.clients.claim();
 });
 
+// 예전엔 "캐시 우선"이라, 파일을 새로 배포해도 브라우저가 옛날 버전을 계속 보여주고
+// 몰래 뒤에서만 최신 버전을 받아두는 식이었음 — 그래서 업데이트할 때마다 "사이트 데이터
+// 지우기"를 안 하면 반영이 안 되는 문제가 계속 반복됐음.
+// → "네트워크 우선"으로 바꿔서, 인터넷이 있으면 항상 최신 파일을 먼저 받아오고(=재실행/
+//   새로고침 한 번이면 바로 최신 버전 반영), 인터넷이 없을 때만 캐시로 대체함(=노트북에서
+//   오프라인일 때도 기존 기록 조회 가능하다는 조건은 그대로 유지됨).
 self.addEventListener("fetch", function (event) {
   if (event.request.method !== "GET") return;
 
   event.respondWith(
-    caches.match(event.request).then(function (cached) {
-      var network = fetch(event.request).then(function (res) {
-        try {
-          var copy = res.clone();
-          caches.open(CACHE_NAME).then(function (cache) { cache.put(event.request, copy); });
-        } catch (e) { /* no-op */ }
-        return res;
-      }).catch(function () { return cached; });
-      // 캐시가 있으면 즉시 보여주고(오프라인 대비), 없으면 네트워크 응답을 기다림
-      return cached || network;
+    fetch(event.request).then(function (res) {
+      try {
+        var copy = res.clone();
+        caches.open(CACHE_NAME).then(function (cache) { cache.put(event.request, copy); });
+      } catch (e) { /* no-op */ }
+      return res;
+    }).catch(function () {
+      return caches.match(event.request).then(function (cached) {
+        return cached || Response.error();
+      });
     })
   );
 });
