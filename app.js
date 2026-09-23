@@ -50,6 +50,17 @@
   var DEFAULT_CATEGORY_ID = CATEGORIES[0].id;
 
   // ---------------------------------------------------------------------
+  // 기록 유형 — 통계 화면에서 "고칠점 / 개선된 점"을 따로 모아 보기 위한 태그.
+  // 기존 기록(이 필드가 없는 데이터)은 항상 "log"(일반 기록)로 취급한다.
+  // ---------------------------------------------------------------------
+  var NOTE_TYPES = [
+    { id: "log", name: "일반 기록", color: "#8C877D", tint: "#F3F0EA", border: "#E4DFD5" },
+    { id: "fix", name: "고칠점", color: "#B3432E", tint: "#FBEFEC", border: "#E7C9C0" },
+    { id: "improved", name: "개선된 점", color: "#4C9A6A", tint: "#EAF6EE", border: "#CFE8D6" }
+  ];
+  var DEFAULT_NOTE_TYPE = NOTE_TYPES[0].id;
+
+  // ---------------------------------------------------------------------
   // 전문가 팁 — 유튜브·기사 등에서 참고한 코칭 내용 (내가 쓴 연습 기록과 구분해서 표시)
   // ---------------------------------------------------------------------
   var EXPERT_TIPS = {
@@ -258,7 +269,7 @@
     }
   }
 
-  function addEntry(date, categoryId, text) {
+  function addEntry(date, categoryId, text, noteType) {
     var entries = loadEntries();
     var now = new Date().toISOString();
     var entry = {
@@ -266,6 +277,7 @@
       date: date,
       category: categoryId,
       text: text,
+      noteType: noteType || DEFAULT_NOTE_TYPE,
       createdAt: now,
       updatedAt: now
     };
@@ -380,6 +392,67 @@
     return CATEGORIES[0];
   }
 
+  function noteTypeById(id) {
+    for (var i = 0; i < NOTE_TYPES.length; i++) {
+      if (NOTE_TYPES[i].id === id) return NOTE_TYPES[i];
+    }
+    return NOTE_TYPES[0];
+  }
+
+  // ---------------------------------------------------------------------
+  // 통계 집계 — 월별 연습 횟수(영법별), 고칠점·개선된 점의 영법별 분포
+  // ---------------------------------------------------------------------
+  function monthKey(dateStr) { return (dateStr || "").slice(0, 7); } // "YYYY-MM"
+
+  function monthLabel(key) {
+    var parts = (key || "").split("-");
+    if (parts.length !== 2) return key || "";
+    return parts[0] + "." + parts[1];
+  }
+
+  // 최근 monthsBack개월(이번 달 포함)을 기준으로 월별 x 영법별 기록 수를 집계
+  function monthlyCategoryStats(entries, monthsBack) {
+    var n = monthsBack || 6;
+    var now = new Date();
+    var months = [];
+    for (var i = n - 1; i >= 0; i--) {
+      var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
+    }
+    var byMonth = {};
+    months.forEach(function (m) {
+      var row = { total: 0 };
+      CATEGORIES.forEach(function (c) { row[c.id] = 0; });
+      byMonth[m] = row;
+    });
+    (entries || []).forEach(function (e) {
+      var mk = monthKey(e.date);
+      var row = byMonth[mk];
+      if (row && row.hasOwnProperty(e.category)) {
+        row[e.category]++;
+        row.total++;
+      }
+    });
+    var max = 0;
+    months.forEach(function (m) { if (byMonth[m].total > max) max = byMonth[m].total; });
+    return { months: months, byMonth: byMonth, max: max };
+  }
+
+  // 특정 기록 유형(고칠점/개선된 점)을 영법별 개수 + 최근순 목록으로 집계
+  function noteTypeCategoryStats(entries, noteTypeId) {
+    var counts = {};
+    CATEGORIES.forEach(function (c) { counts[c.id] = 0; });
+    var list = [];
+    (entries || []).forEach(function (e) {
+      var nt = e.noteType || DEFAULT_NOTE_TYPE;
+      if (nt === noteTypeId) {
+        if (counts.hasOwnProperty(e.category)) counts[e.category]++;
+        list.push(e);
+      }
+    });
+    return { counts: counts, list: sortByDateDesc(list) };
+  }
+
   // ---------------------------------------------------------------------
   // 자동 카테고리 추천 (키워드 매칭 — 필요하면 나중에 더 똑똑한 규칙으로 교체)
   // ---------------------------------------------------------------------
@@ -464,6 +537,7 @@
     if (parts[0] === "new") return { view: "new" };
     if (parts[0] === "edit" && parts[1]) return { view: "edit", id: parts[1] };
     if (parts[0] === "sync") return { view: "sync" };
+    if (parts[0] === "stats") return { view: "stats" };
     return { view: "home" };
   }
 
@@ -485,6 +559,7 @@
     else if (route.view === "new") renderFormView(main, null);
     else if (route.view === "edit") renderFormView(main, route.id);
     else if (route.view === "sync" && window.SwimSync) window.SwimSync.renderView(main);
+    else if (route.view === "stats") renderStatsView(main);
     else renderHomeView(main);
   }
 
@@ -514,6 +589,15 @@
       ]);
       nav.appendChild(item);
     });
+
+    var statsActive = route.view === "stats";
+    nav.appendChild(el("a", {
+      href: "#/stats",
+      class: "nav-item" + (statsActive ? " active" : "")
+    }, [
+      el("span", { class: "nav-dot nav-dot-stats" }),
+      el("span", { class: "nav-label" }, ["통계"])
+    ]));
 
     if (window.SwimSync) {
       window.SwimSync.renderStatusBadge(document.getElementById("sync-status"));
@@ -548,6 +632,15 @@
         el("span", { class: "mobile-nav-count" }, [String(counts[cat.id] || 0)])
       ]));
     });
+
+    var statsActiveMobile = route.view === "stats";
+    nav.appendChild(el("a", {
+      href: "#/stats",
+      class: "mobile-nav-item" + (statsActiveMobile ? " active" : "")
+    }, [
+      el("span", { class: "mobile-nav-dot mobile-nav-dot-stats" }),
+      el("span", { class: "mobile-nav-label" }, ["통계"])
+    ]));
 
     if (window.SwimSync) {
       window.SwimSync.renderStatusBadge(document.getElementById("mobile-sync-status"));
@@ -617,17 +710,28 @@
     }
   }
 
+  // noteType이 "log"(일반 기록)이면 배지를 안 보여줌 — 대부분의 기록은 여전히 평소처럼 표시됨
+  function noteTypeBadge(entry) {
+    var ntId = entry.noteType || DEFAULT_NOTE_TYPE;
+    if (ntId === DEFAULT_NOTE_TYPE) return null;
+    var nt = noteTypeById(ntId);
+    return el("span", { class: "entry-tag note-type-tag", style: "background:" + nt.tint + ";color:" + nt.color }, [nt.name]);
+  }
+
   function entryCard(entry) {
     var cat = catById(entry.category);
+    var meta = [
+      el("span", { class: "entry-tag", style: "background:" + cat.tint + ";color:" + cat.color }, [cat.name]),
+      el("span", { class: "entry-date" }, [fmtDate(entry.date)])
+    ];
+    var badge = noteTypeBadge(entry);
+    if (badge) meta.splice(1, 0, badge);
     return el("a", {
       href: "#/entry/" + entry.id,
       class: "entry-card",
       style: "border-left-color:" + cat.color
     }, [
-      el("div", { class: "entry-card-meta" }, [
-        el("span", { class: "entry-tag", style: "background:" + cat.tint + ";color:" + cat.color }, [cat.name]),
-        el("span", { class: "entry-date" }, [fmtDate(entry.date)])
-      ]),
+      el("div", { class: "entry-card-meta" }, meta),
       el("div", { class: "entry-text" }, [entry.text])
     ]);
   }
@@ -705,10 +809,13 @@
       el("a", { href: "#/category/" + cat.id, class: "back-link" }, ["← " + cat.name + " 목록으로"])
     ]));
 
-    main.appendChild(el("div", { class: "detail-meta" }, [
+    var detailMeta = [
       el("span", { class: "entry-tag", style: "background:" + cat.tint + ";color:" + cat.color }, [cat.name]),
       el("span", { class: "entry-date" }, [fmtDate(entry.date)])
-    ]));
+    ];
+    var detailBadge = noteTypeBadge(entry);
+    if (detailBadge) detailMeta.splice(1, 0, detailBadge);
+    main.appendChild(el("div", { class: "detail-meta" }, detailMeta));
 
     var body = el("div", { class: "detail-card", style: "border-left-color:" + cat.color });
     entry.text.split("\n").forEach(function (line) {
@@ -730,6 +837,151 @@
         }
       }, ["삭제"])
     ]));
+  }
+
+  // ---------------------------------------------------------------------
+  // 통계 화면 — 월별 연습 횟수(영법별) 스택 막대 그래프 + 고칠점·개선된 점 집계
+  // ---------------------------------------------------------------------
+  function svgEl(tag, attrs, children) {
+    var node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    (children || []).forEach(function (child) {
+      if (child === null || child === undefined) return;
+      if (typeof child === "string" || typeof child === "number") {
+        node.appendChild(document.createTextNode(String(child)));
+      } else {
+        node.appendChild(child);
+      }
+    });
+    return node;
+  }
+
+  // 최근 N개월치를 영법별로 쌓아 올린 막대 그래프 (외부 차트 라이브러리 없이 인라인 SVG로 직접 그림 —
+  // 오프라인에서도 항상 동작해야 하기 때문)
+  function monthlyStackedChart(stats) {
+    var W = 640, H = 200, padTop = 16, padBottom = 26, padSide = 6;
+    var innerH = H - padTop - padBottom;
+    var months = stats.months;
+    var n = months.length;
+    var gap = 14;
+    var barW = (W - padSide * 2 - gap * (n - 1)) / n;
+    var maxTotal = Math.max(stats.max, 1);
+
+    var svg = svgEl("svg", {
+      viewBox: "0 0 " + W + " " + H,
+      class: "stats-chart",
+      role: "img",
+      "aria-label": "월별 연습 횟수를 영법별로 쌓아 표시한 막대 그래프"
+    });
+
+    svg.appendChild(svgEl("line", {
+      x1: padSide, y1: H - padBottom, x2: W - padSide, y2: H - padBottom,
+      class: "chart-baseline"
+    }));
+
+    months.forEach(function (m, i) {
+      var x = padSide + i * (barW + gap);
+      var row = stats.byMonth[m];
+      var yCursor = H - padBottom;
+      CATEGORIES.forEach(function (cat) {
+        var count = row[cat.id] || 0;
+        if (count <= 0) return;
+        var segH = (count / maxTotal) * innerH;
+        var y = yCursor - segH;
+        svg.appendChild(svgEl("rect", {
+          x: String(x), y: String(y), width: String(barW), height: String(Math.max(segH, 1)),
+          fill: cat.color, rx: "2"
+        }));
+        yCursor = y;
+      });
+      if (row.total > 0) {
+        svg.appendChild(svgEl("text", {
+          x: String(x + barW / 2), y: String(yCursor - 6), "text-anchor": "middle",
+          class: "chart-total-label"
+        }, [String(row.total)]));
+      }
+      svg.appendChild(svgEl("text", {
+        x: String(x + barW / 2), y: String(H - padBottom + 17), "text-anchor": "middle",
+        class: "chart-month-label"
+      }, [monthLabel(m)]));
+    });
+
+    return svg;
+  }
+
+  function categoryLegend() {
+    var row = el("div", { class: "chart-legend" });
+    CATEGORIES.forEach(function (cat) {
+      row.appendChild(el("span", { class: "chart-legend-item" }, [
+        el("span", { class: "chart-legend-dot", style: "background:" + cat.color }),
+        el("span", {}, [cat.name])
+      ]));
+    });
+    return row;
+  }
+
+  function noteTypeBreakdown(entries, noteTypeId) {
+    var stats = noteTypeCategoryStats(entries, noteTypeId);
+    var nt = noteTypeById(noteTypeId);
+    var wrap = el("div", {});
+    wrap.appendChild(el("div", { class: "section-title" }, [nt.name + " · 영법별"]));
+
+    if (stats.list.length === 0) {
+      wrap.appendChild(el("div", { class: "empty" }, [
+        "아직 “" + nt.name + "”으로 표시된 기록이 없습니다. 새 기록 작성 시 “기록 유형”에서 선택하면 여기에 자동으로 쌓여요."
+      ]));
+      return wrap;
+    }
+
+    var maxCount = 1;
+    CATEGORIES.forEach(function (cat) {
+      if ((stats.counts[cat.id] || 0) > maxCount) maxCount = stats.counts[cat.id];
+    });
+
+    var barList = el("div", { class: "stat-bar-list" });
+    CATEGORIES.forEach(function (cat) {
+      var count = stats.counts[cat.id] || 0;
+      var pct = count > 0 ? Math.max(4, Math.round((count / maxCount) * 100)) : 0;
+      barList.appendChild(el("div", { class: "stat-bar-row" }, [
+        el("div", { class: "stat-bar-label" }, [
+          el("span", { class: "chart-legend-dot", style: "background:" + cat.color }),
+          el("span", {}, [cat.name])
+        ]),
+        el("div", { class: "stat-bar-track" }, [
+          el("div", { class: "stat-bar-fill", style: "width:" + pct + "%;background:" + cat.color })
+        ]),
+        el("div", { class: "stat-bar-count" }, [String(count)])
+      ]));
+    });
+    wrap.appendChild(barList);
+
+    wrap.appendChild(el("div", { class: "section-title" }, ["최근 " + nt.name]));
+    var list = el("div", { class: "entry-list" });
+    stats.list.slice(0, 5).forEach(function (entry) { list.appendChild(entryCard(entry)); });
+    wrap.appendChild(list);
+
+    return wrap;
+  }
+
+  function renderStatsView(main) {
+    var entries = loadEntries();
+
+    main.appendChild(el("div", { class: "view-header" }, [
+      el("h1", {}, ["통계"])
+    ]));
+    main.appendChild(el("div", { class: "view-subtitle" }, ["기록을 남길수록 자동으로 쌓여요"]));
+
+    main.appendChild(el("div", { class: "section-title" }, ["월별 연습 횟수 (영법별)"]));
+    if (entries.length === 0) {
+      main.appendChild(el("div", { class: "empty" }, ["아직 기록이 없습니다."]));
+    } else {
+      var monthly = monthlyCategoryStats(entries, 6);
+      main.appendChild(el("div", { class: "stats-chart-wrap" }, [monthlyStackedChart(monthly)]));
+      main.appendChild(categoryLegend());
+    }
+
+    main.appendChild(noteTypeBreakdown(entries, "fix"));
+    main.appendChild(noteTypeBreakdown(entries, "improved"));
   }
 
   function todayStr() {
@@ -816,6 +1068,23 @@
     textarea.addEventListener("input", renderChips);
     renderChips();
 
+    // 기록 유형 — 통계 화면의 "고칠점 / 개선된 점" 집계에 쓰임. 기본은 평소처럼 "일반 기록".
+    var noteTypeId = editing ? (editing.noteType || DEFAULT_NOTE_TYPE) : DEFAULT_NOTE_TYPE;
+    var typeChipRow = el("div", { class: "chip-row" });
+    function renderTypeChips() {
+      typeChipRow.innerHTML = "";
+      NOTE_TYPES.forEach(function (nt) {
+        var active = nt.id === noteTypeId;
+        typeChipRow.appendChild(el("button", {
+          type: "button",
+          class: "chip" + (active ? " chip-active" : ""),
+          style: active ? ("background:" + nt.color + ";border-color:" + nt.color) : "",
+          onclick: function () { noteTypeId = nt.id; renderTypeChips(); }
+        }, [nt.name]));
+      });
+    }
+    renderTypeChips();
+
     var form = el("div", { class: "entry-form" }, [
       el("label", { class: "field-label" }, ["날짜"]),
       dateInput,
@@ -824,6 +1093,8 @@
       el("label", { class: "field-label" }, ["카테고리 (자동 추천 · 직접 선택 가능)"]),
       chipRow,
       statusLine,
+      el("label", { class: "field-label" }, ["기록 유형 (선택 — 통계 화면에 자동으로 반영됨)"]),
+      typeChipRow,
       el("div", { class: "form-actions" }, [
         el("button", {
           class: "btn btn-primary btn-large",
@@ -837,11 +1108,11 @@
             var catId = currentActiveId();
             var date = dateInput.value || todayStr();
             if (editing) {
-              updateEntry(editing.id, { date: date, category: catId, text: text });
+              updateEntry(editing.id, { date: date, category: catId, text: text, noteType: noteTypeId });
               syncSoon();
               navigate("#/entry/" + editing.id);
             } else {
-              var entry = addEntry(date, catId, text);
+              var entry = addEntry(date, catId, text, noteTypeId);
               syncSoon();
               navigate("#/entry/" + entry.id);
             }
@@ -866,6 +1137,8 @@
   // 테스트 · 향후 확장을 위해 외부에 노출
   window.SwimNotesApp = {
     CATEGORIES: CATEGORIES,
+    NOTE_TYPES: NOTE_TYPES,
+    DEFAULT_NOTE_TYPE: DEFAULT_NOTE_TYPE,
     EXPERT_TIPS: EXPERT_TIPS,
     STORAGE_KEY: STORAGE_KEY,
     SEEDED_KEY: SEEDED_KEY,
@@ -883,7 +1156,13 @@
     render: render,
     parseHash: parseHash,
     catById: catById,
+    noteTypeById: noteTypeById,
+    monthKey: monthKey,
+    monthLabel: monthLabel,
+    monthlyCategoryStats: monthlyCategoryStats,
+    noteTypeCategoryStats: noteTypeCategoryStats,
     renderMobileNav: renderMobileNav,
+    renderStatsView: renderStatsView,
     loadTombstones: loadTombstones,
     saveTombstones: saveTombstones,
     addTombstone: addTombstone,

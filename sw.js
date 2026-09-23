@@ -4,7 +4,7 @@
  * file:// 등 서비스 워커를 지원하지 않는 환경에서는 index.html의 등록 코드가
  * 조용히 무시하도록 되어 있으므로 이 파일 자체는 항상 존재해도 안전함.
  */
-var CACHE_NAME = "swim-notes-shell-v3";
+var CACHE_NAME = "swim-notes-shell-v4";
 var APP_SHELL = [
   "./",
   "./index.html",
