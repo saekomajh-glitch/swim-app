@@ -59,7 +59,20 @@
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function () { /* 오프라인/파일 실행 환경에서는 조용히 무시 */ });
+      navigator.serviceWorker.register('sw.js').then(function (reg) {
+        // 브라우저가 스스로 하는 업데이트 확인은 최대 24시간에 한 번으로 제한되어 있어서,
+        // (특히 설치된 앱처럼 계속 켜두는 경우) 새 버전을 올려도 한참 뒤에야 반영되곤 함.
+        // 여기서 직접 update()를 호출하면 그 24시간 제한과 상관없이 즉시 최신 여부를 확인함.
+        if (reg && reg.update) reg.update().catch(function () { /* no-op */ });
+      }).catch(function () { /* 오프라인/파일 실행 환경에서는 조용히 무시 */ });
+
+      // 설치된 앱을 백그라운드에 두었다가 다시 앞으로 가져올 때도 한 번 더 확인
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState !== 'visible') return;
+        navigator.serviceWorker.getRegistration().then(function (reg) {
+          if (reg && reg.update) reg.update().catch(function () { /* no-op */ });
+        });
+      });
     });
   }
 </script>
