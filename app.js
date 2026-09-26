@@ -274,6 +274,10 @@
     return "e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
+  function genAttachmentId() {
+    return "att" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
   function ensureSeed() {
     try {
       if (window.localStorage.getItem(SEEDED_KEY)) return;
@@ -296,7 +300,10 @@
     }
   }
 
-  function addEntry(date, categoryId, text, noteType) {
+  // attachments: [{ id, kind: 'image'|'video'|'audio', name, mimeType, size, driveFileId }]
+  // 실제 파일 내용은 localStorage에 넣지 않고(용량 문제) Google Drive에 올린 뒤 이 메타데이터만
+  // 저장·동기화한다. driveFileId가 있어야 나중에 다른 기기에서 실제로 불러와 볼 수 있다.
+  function addEntry(date, categoryId, text, attachments) {
     var entries = loadEntries();
     var now = new Date().toISOString();
     var entry = {
@@ -304,7 +311,7 @@
       date: date,
       category: categoryId,
       text: text,
-      noteType: noteType || DEFAULT_NOTE_TYPE,
+      attachments: attachments || [],
       createdAt: now,
       updatedAt: now
     };
@@ -326,7 +333,21 @@
   }
 
   function deleteEntry(id) {
-    var entries = loadEntries().filter(function (e) { return e.id !== id; });
+    var entries = loadEntries();
+    var target = null;
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].id === id) { target = entries[i]; break; }
+    }
+    // 기록에 딸린 첨부(사진·동영상·음성 메모)도 함께 정리 — Drive에서 최선을 다해 지우되
+    // (로그인 안 돼있거나 오프라인이면 조용히 건너뜀) 실패해도 기록 삭제 자체는 진행됨
+    if (target && target.attachments && target.attachments.length && window.SwimSync && window.SwimSync.deleteMediaFile) {
+      target.attachments.forEach(function (att) {
+        if (att && att.driveFileId) {
+          try { window.SwimSync.deleteMediaFile(att.driveFileId); } catch (e) { /* no-op */ }
+        }
+      });
+    }
+    entries = entries.filter(function (e) { return e.id !== id; });
     saveEntries(entries);
     addTombstone(id);
   }
@@ -754,6 +775,21 @@
     return badges;
   }
 
+  var ATTACHMENT_ICON = { image: "📷", video: "🎬", audio: "🎤" };
+  var ATTACHMENT_LABEL = { image: "사진", video: "동영상", audio: "음성 메모" };
+
+  // 목록 카드에 표시할 짧은 첨부 요약(아이콘 + 개수) — 종류별 아이콘은 중복 없이 한 번씩만
+  function attachmentSummaryTag(entry) {
+    var atts = entry.attachments || [];
+    if (!atts.length) return null;
+    var seenKinds = [];
+    atts.forEach(function (a) {
+      var icon = ATTACHMENT_ICON[a.kind] || "📎";
+      if (seenKinds.indexOf(icon) === -1) seenKinds.push(icon);
+    });
+    return el("span", { class: "entry-tag attachment-summary-tag" }, [seenKinds.join(" ") + " " + atts.length]);
+  }
+
   function entryCard(entry) {
     var cat = catById(entry.category);
     var meta = [
@@ -762,6 +798,8 @@
     ];
     var badges = noteTypeBadges(entry);
     if (badges.length) { var args = [1, 0].concat(badges); Array.prototype.splice.apply(meta, args); }
+    var attTag = attachmentSummaryTag(entry);
+    if (attTag) meta.push(attTag);
     return el("a", {
       href: "#/entry/" + entry.id,
       class: "entry-card",
@@ -770,6 +808,43 @@
       el("div", { class: "entry-card-meta" }, meta),
       el("div", { class: "entry-text" }, [entry.text])
     ]);
+  }
+
+  // 상세 화면에서 첨부 하나를 보여주는 타일. 목록을 열 때마다 자동으로 다운로드하지 않고
+  // "보기"를 눌렀을 때만 Drive에서 실제 파일을 받아오게 해서 불필요한 데이터 사용을 줄임.
+  function attachmentTile(att) {
+    var tile = el("div", { class: "attachment-tile" });
+    tile.appendChild(el("div", { class: "attachment-head" }, [
+      el("span", { class: "attachment-kind" }, [(ATTACHMENT_ICON[att.kind] || "📎") + " " + (ATTACHMENT_LABEL[att.kind] || "첨부")]),
+      el("span", { class: "attachment-name" }, [att.name || ""])
+    ]));
+
+    var mediaWrap = el("div", { class: "attachment-media" });
+    var loadBtn = el("button", { type: "button", class: "btn btn-outline btn-small" }, ["보기"]);
+    loadBtn.addEventListener("click", function () {
+      loadBtn.disabled = true;
+      loadBtn.textContent = "불러오는 중…";
+      if (!window.SwimSync || !window.SwimSync.getMediaObjectUrl) {
+        mediaWrap.textContent = "지금은 미디어를 불러올 수 없습니다.";
+        return;
+      }
+      window.SwimSync.getMediaObjectUrl(att.driveFileId).then(function (url) {
+        mediaWrap.innerHTML = "";
+        var node;
+        if (att.kind === "image") node = el("img", { src: url, class: "attachment-img" });
+        else if (att.kind === "video") node = el("video", { src: url, controls: "controls", class: "attachment-video" });
+        else node = el("audio", { src: url, controls: "controls", class: "attachment-audio" });
+        mediaWrap.appendChild(node);
+        loadBtn.remove();
+      }).catch(function (err) {
+        mediaWrap.textContent = (err && err.message) || "불러오지 못했습니다. 로그인·인터넷 상태를 확인해주세요.";
+        loadBtn.disabled = false;
+        loadBtn.textContent = "다시 시도";
+      });
+    });
+    tile.appendChild(loadBtn);
+    tile.appendChild(mediaWrap);
+    return tile;
   }
 
   // 전문가 팁 카드 — 개인 연습 기록과 헷갈리지 않도록 배지 · 출처 · 다른 색 톤으로 구분
@@ -859,6 +934,13 @@
       body.appendChild(el("p", {}, [line]));
     });
     main.appendChild(body);
+
+    if (entry.attachments && entry.attachments.length) {
+      main.appendChild(el("div", { class: "section-title" }, ["첨부"]));
+      var attList = el("div", { class: "attachment-list" });
+      entry.attachments.forEach(function (att) { attList.appendChild(attachmentTile(att)); });
+      main.appendChild(attList);
+    }
 
     main.appendChild(el("div", { class: "detail-actions" }, [
       el("a", { href: "#/edit/" + entry.id, class: "btn btn-outline" }, ["수정"]),
@@ -1107,6 +1189,165 @@
     textarea.addEventListener("input", renderChips);
     renderChips();
 
+    // -------------------------------------------------------------------
+    // 첨부(사진·동영상·음성 메모) 편집 상태
+    // 실제 파일은 선택/녹음하는 즉시 Google Drive에 업로드하고, 여기서는 메타데이터만
+    // 들고 있다가 "저장"을 눌렀을 때 기록에 매달아 저장한다(용량 문제로 localStorage에는
+    // 파일 내용 자체를 절대 넣지 않음).
+    // -------------------------------------------------------------------
+    var originalAttachmentIds = {};
+    (editing && editing.attachments ? editing.attachments : []).forEach(function (a) { originalAttachmentIds[a.id] = true; });
+    var attachState = {
+      attachments: editing && editing.attachments ? editing.attachments.slice() : [],
+      pendingDeletes: [], // 기존에 저장돼 있던 첨부를 삭제했을 때, 저장을 눌러야만 실제로 Drive에서 지움
+      recording: false,
+      recorder: null,
+      statusMsg: ""
+    };
+
+    var attachSection = el("div", { class: "attachment-edit-section" });
+
+    function handleAttachFile(file) {
+      var kind = file.type && file.type.indexOf("video") === 0 ? "video" : "image";
+      var maxBytes = 300 * 1024 * 1024;
+      if (file.size > maxBytes) {
+        window.alert("파일이 너무 큽니다. 300MB 이하 파일만 첨부할 수 있어요.");
+        return;
+      }
+      if (!window.SwimSync || !window.SwimSync.isMediaUploadReady || !window.SwimSync.isMediaUploadReady()) {
+        window.alert("사진·동영상 첨부는 먼저 동기화 화면에서 Google 로그인 후, 인터넷이 연결된 상태에서 사용할 수 있어요.");
+        return;
+      }
+      var id = genAttachmentId();
+      attachState.statusMsg = (kind === "video" ? "동영상" : "사진") + " 업로드 중…";
+      renderAttachmentSection();
+      window.SwimSync.uploadMediaFile(file, kind, id).then(function (fileId) {
+        attachState.attachments.push({ id: id, kind: kind, name: file.name, mimeType: file.type, size: file.size, driveFileId: fileId });
+        attachState.statusMsg = "";
+        renderAttachmentSection();
+      }).catch(function (err) {
+        attachState.statusMsg = "";
+        window.alert((err && err.message) || "업로드에 실패했습니다.");
+        renderAttachmentSection();
+      });
+    }
+
+    function toggleRecording() {
+      if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        window.alert("이 브라우저·기기는 음성 녹음을 지원하지 않습니다.");
+        return;
+      }
+      if (attachState.recording) {
+        if (attachState.recorder) attachState.recorder.stop();
+        return;
+      }
+      if (!window.SwimSync || !window.SwimSync.isMediaUploadReady || !window.SwimSync.isMediaUploadReady()) {
+        window.alert("음성 메모는 먼저 동기화 화면에서 Google 로그인 후, 인터넷이 연결된 상태에서 사용할 수 있어요.");
+        return;
+      }
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        var chunks = [];
+        var recorder;
+        try {
+          recorder = new window.MediaRecorder(stream);
+        } catch (e) {
+          window.alert("음성 녹음을 시작할 수 없습니다.");
+          return;
+        }
+        attachState.recorder = recorder;
+        recorder.addEventListener("dataavailable", function (e) {
+          if (e.data && e.data.size > 0) chunks.push(e.data);
+        });
+        recorder.addEventListener("stop", function () {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          attachState.recording = false;
+          attachState.recorder = null;
+          var mime = recorder.mimeType || "audio/webm";
+          var blob = new Blob(chunks, { type: mime });
+          var id = genAttachmentId();
+          var fname = "음성메모-" + todayStr() + "." + (mime.indexOf("mp4") >= 0 ? "m4a" : "webm");
+          var file = blob;
+          try { file = new File([blob], fname, { type: mime }); } catch (e) { /* File 생성자 미지원 시 Blob 그대로 사용 */ }
+          attachState.statusMsg = "음성 메모 업로드 중…";
+          renderAttachmentSection();
+          window.SwimSync.uploadMediaFile(file, "audio", id).then(function (fileId) {
+            attachState.attachments.push({ id: id, kind: "audio", name: fname, mimeType: mime, size: blob.size, driveFileId: fileId });
+            attachState.statusMsg = "";
+            renderAttachmentSection();
+          }).catch(function (err) {
+            attachState.statusMsg = "";
+            window.alert((err && err.message) || "업로드에 실패했습니다.");
+            renderAttachmentSection();
+          });
+        });
+        recorder.start();
+        attachState.recording = true;
+        renderAttachmentSection();
+      }).catch(function () {
+        window.alert("마이크 사용 권한이 필요합니다.");
+      });
+    }
+
+    function renderAttachmentSection() {
+      attachSection.innerHTML = "";
+      attachSection.appendChild(el("label", { class: "field-label" }, ["사진 · 동영상 · 음성 메모 (선택)"]));
+
+      if (attachState.attachments.length) {
+        var list = el("div", { class: "attachment-edit-list" });
+        attachState.attachments.forEach(function (att, idx) {
+          list.appendChild(el("div", { class: "attachment-edit-row" }, [
+            el("span", { class: "attachment-edit-label" }, [(ATTACHMENT_ICON[att.kind] || "📎") + " " + (att.name || ATTACHMENT_LABEL[att.kind] || "")]),
+            el("button", {
+              type: "button",
+              class: "btn btn-text",
+              onclick: function () {
+                if (originalAttachmentIds[att.id]) {
+                  attachState.pendingDeletes.push(att.driveFileId);
+                } else if (att.driveFileId && window.SwimSync && window.SwimSync.deleteMediaFile) {
+                  window.SwimSync.deleteMediaFile(att.driveFileId);
+                }
+                attachState.attachments.splice(idx, 1);
+                renderAttachmentSection();
+              }
+            }, ["삭제"])
+          ]));
+        });
+        attachSection.appendChild(list);
+      }
+
+      var actionRow = el("div", { class: "attachment-action-row" });
+      var fileInput = el("input", {
+        type: "file",
+        accept: "image/*,video/*",
+        class: "attachment-file-input",
+        onchange: function (e) {
+          var f = e.target.files && e.target.files[0];
+          e.target.value = "";
+          if (f) handleAttachFile(f);
+        }
+      });
+      var attachBtn = el("button", {
+        type: "button",
+        class: "btn btn-outline",
+        onclick: function () { fileInput.click(); }
+      }, ["+ 사진/동영상"]);
+      actionRow.appendChild(attachBtn);
+      actionRow.appendChild(fileInput);
+
+      var recBtn = el("button", {
+        type: "button",
+        class: "btn btn-outline" + (attachState.recording ? " btn-recording" : ""),
+        onclick: toggleRecording
+      }, [attachState.recording ? "■ 녹음 정지" : "🎤 음성 메모"]);
+      actionRow.appendChild(recBtn);
+      attachSection.appendChild(actionRow);
+
+      if (attachState.statusMsg) {
+        attachSection.appendChild(el("div", { class: "status-line", style: "margin-top:8px" }, [attachState.statusMsg]));
+      }
+    }
+    renderAttachmentSection();
+
     var form = el("div", { class: "entry-form" }, [
       el("label", { class: "field-label" }, ["날짜"]),
       dateInput,
@@ -1115,6 +1356,7 @@
       el("label", { class: "field-label" }, ["카테고리 (자동 추천 · 직접 선택 가능)"]),
       chipRow,
       statusLine,
+      attachSection,
       el("div", { class: "form-actions" }, [
         el("button", {
           class: "btn btn-primary btn-large",
@@ -1127,15 +1369,19 @@
             }
             var catId = currentActiveId();
             var date = dateInput.value || todayStr();
+            var attachments = attachState.attachments;
+            var savedId;
             if (editing) {
-              updateEntry(editing.id, { date: date, category: catId, text: text });
-              syncSoon();
-              navigate("#/entry/" + editing.id);
+              updateEntry(editing.id, { date: date, category: catId, text: text, attachments: attachments });
+              savedId = editing.id;
             } else {
-              var entry = addEntry(date, catId, text);
-              syncSoon();
-              navigate("#/entry/" + entry.id);
+              savedId = addEntry(date, catId, text, attachments).id;
             }
+            attachState.pendingDeletes.forEach(function (fileId) {
+              if (window.SwimSync && window.SwimSync.deleteMediaFile) window.SwimSync.deleteMediaFile(fileId);
+            });
+            syncSoon();
+            navigate("#/entry/" + savedId);
           }
         }, [editing ? "저장" : "적용"])
       ])
@@ -1187,6 +1433,7 @@
     loadTombstones: loadTombstones,
     saveTombstones: saveTombstones,
     addTombstone: addTombstone,
-    replaceAllData: replaceAllData
+    replaceAllData: replaceAllData,
+    genAttachmentId: genAttachmentId
   };
 })();

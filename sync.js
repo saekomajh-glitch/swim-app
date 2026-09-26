@@ -345,6 +345,54 @@
     return { kept: kept, droppedIds: droppedIds };
   }
 
+  // -----------------------------------------------------------------
+  // 첨부(사진·동영상·음성 메모) — 동기화 데이터 파일(JSON)에는 메타데이터만 들어가고,
+  // 실제 파일 내용은 여기서 "swim" 폴더에 별도 파일로 올려서 두 기기가 Drive를 통해
+  // 공유한다(로컬 저장 공간을 아끼고, 폰↔노트북 간 큰 파일도 자연스럽게 오가게 하기 위함).
+  // -----------------------------------------------------------------
+  var mediaObjectUrlCache = {}; // driveFileId -> 이미 받아온 object URL(중복 다운로드 방지)
+
+  function isMediaUploadReady() {
+    return !!(state.signedIn && state.accessToken && isOnline());
+  }
+
+  function uploadMediaFile(file, kind, attachmentId) {
+    if (!isOnline()) return Promise.reject(new Error("오프라인 상태에서는 첨부를 업로드할 수 없습니다."));
+    if (!state.signedIn || !state.accessToken) return Promise.reject(new Error("먼저 동기화 화면에서 Google 계정으로 로그인해주세요."));
+    return findOrCreateFolder().then(function (folderId) {
+      var metadata = { name: "media-" + (attachmentId || Date.now()) + "-" + (file.name || kind), parents: [folderId] };
+      var form = new FormData();
+      form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+      form.append("file", file);
+      return driveFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+        method: "POST",
+        body: form
+      });
+    }).then(function (res) { return res.json(); }).then(function (data) { return data.id; });
+  }
+
+  // 최선을 다해(best-effort) 지우는 함수 — 로그인 안 돼있거나 오프라인이면 조용히 아무 것도
+  // 하지 않는다(기록 자체를 삭제/저장하는 흐름을 이 실패 때문에 막지 않기 위함).
+  function deleteMediaFile(fileId) {
+    if (!fileId || !state.signedIn || !state.accessToken) return Promise.resolve();
+    return driveFetch("https://www.googleapis.com/drive/v3/files/" + fileId, { method: "DELETE" })
+      .catch(function () { /* 지우지 못해도 무시 — 다음 기회에 정리되거나 Drive에 남아있어도 무해함 */ });
+  }
+
+  function getMediaObjectUrl(fileId) {
+    if (!fileId) return Promise.reject(new Error("첨부 정보가 없습니다."));
+    if (mediaObjectUrlCache[fileId]) return Promise.resolve(mediaObjectUrlCache[fileId]);
+    if (!isOnline()) return Promise.reject(new Error("오프라인 상태입니다. 인터넷 연결 후 다시 시도해주세요."));
+    if (!state.signedIn || !state.accessToken) return Promise.reject(new Error("먼저 동기화 화면에서 로그인해주세요."));
+    return driveFetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media")
+      .then(function (res) { return res.blob(); })
+      .then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        mediaObjectUrlCache[fileId] = url;
+        return url;
+      });
+  }
+
   // Google 로그인 접근 토큰은 보통 1시간 정도만 유효함. 만료되면 signedIn이 false로
   // 바뀌는데, 예전엔 여기서 그냥 "로그인해주세요" 에러만 남기고 끝났음 — 그러면 앱을
   // 계속 켜둔 채로 쓰다가 토큰이 만료된 뒤로는 자동 동기화가 계속 조용히 실패만 하고,
@@ -598,6 +646,10 @@
     renderView: renderView,
     renderStatusBadge: renderStatusBadge,
     mergeData: mergeData,
-    dedupeByContent: dedupeByContent
+    dedupeByContent: dedupeByContent,
+    isMediaUploadReady: isMediaUploadReady,
+    uploadMediaFile: uploadMediaFile,
+    deleteMediaFile: deleteMediaFile,
+    getMediaObjectUrl: getMediaObjectUrl
   };
 })();
