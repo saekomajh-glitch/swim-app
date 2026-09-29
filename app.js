@@ -778,6 +778,18 @@
   var ATTACHMENT_ICON = { image: "📷", video: "🎬", audio: "🎤" };
   var ATTACHMENT_LABEL = { image: "사진", video: "동영상", audio: "음성 메모" };
 
+  // 본문 없이 사진·동영상·음성 메모만 첨부했을 때, 목록에 빈 칸으로 보이지 않도록
+  // "사진 · 음성 메모 첨부"처럼 자동으로 채워줄 문구를 만든다.
+  function autoAttachmentText(attachments) {
+    if (!attachments || !attachments.length) return "";
+    var labels = [];
+    attachments.forEach(function (a) {
+      var label = ATTACHMENT_LABEL[a.kind] || "첨부";
+      if (labels.indexOf(label) === -1) labels.push(label);
+    });
+    return labels.join(" · ") + " 첨부";
+  }
+
   // 목록 카드에 표시할 짧은 첨부 요약(아이콘 + 개수) — 종류별 아이콘은 중복 없이 한 번씩만
   function attachmentSummaryTag(entry) {
     var atts = entry.attachments || [];
@@ -1363,9 +1375,14 @@
           onclick: function () {
             var text = textarea.value.trim();
             if (!text) {
-              window.alert("내용을 입력해주세요.");
-              textarea.focus();
-              return;
+              if (attachState.attachments.length > 0) {
+                // 내용 없이 사진·동영상·음성 메모만 남기는 경우 — 빈 칸 대신 자동으로 문구를 채워줌
+                text = autoAttachmentText(attachState.attachments);
+              } else {
+                window.alert("내용을 입력하거나 사진·동영상·음성 메모를 첨부해주세요.");
+                textarea.focus();
+                return;
+              }
             }
             var catId = currentActiveId();
             var date = dateInput.value || todayStr();
@@ -1434,6 +1451,7 @@
     saveTombstones: saveTombstones,
     addTombstone: addTombstone,
     replaceAllData: replaceAllData,
-    genAttachmentId: genAttachmentId
+    genAttachmentId: genAttachmentId,
+    autoAttachmentText: autoAttachmentText
   };
 })();
