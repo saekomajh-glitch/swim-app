@@ -43,6 +43,8 @@
 <!-- Google 로그인(Identity Services) — 동기화 기능에만 필요한 유일한 외부 스크립트.
      인터넷이 없거나 이 스크립트를 못 불러와도 나머지 기능은 그대로 오프라인 동작함. -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<!-- 엑셀 내보내기용 라이브러리(SheetJS) — 로컬 파일로 함께 배포해서 오프라인에서도 동작함 -->
+<script src="lib/xlsx.mini.min.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 <script>

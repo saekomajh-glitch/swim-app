@@ -790,6 +790,130 @@
     return labels.join(" · ") + " 첨부";
   }
 
+  // ---------------------------------------------------------------------
+  // 내보내기 (엑셀 / 텍스트) — 기록을 정리해서 파일로 저장
+  // ---------------------------------------------------------------------
+
+  // 화면 목록은 최신순(내림차순)이지만, 내보내는 파일은 일기처럼 날짜순으로 읽히도록 오름차순 정렬
+  function sortByDateAsc(list) {
+    return list.slice().sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return (a.createdAt || "") < (b.createdAt || "") ? -1 : 1;
+    });
+  }
+
+  // 내보내기 파일 한 줄에 들어갈 첨부 요약 — "사진 2개, 음성 메모 1개"처럼 개수까지 표시
+  function attachmentExportSummary(attachments) {
+    if (!attachments || !attachments.length) return "";
+    var counts = {};
+    var order = [];
+    attachments.forEach(function (a) {
+      var label = ATTACHMENT_LABEL[a.kind] || "첨부";
+      if (!counts[label]) { counts[label] = 0; order.push(label); }
+      counts[label]++;
+    });
+    return order.map(function (label) { return label + " " + counts[label] + "개"; }).join(", ");
+  }
+
+  function fmtDateTime(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleString("ko-KR"); } catch (e) { return ""; }
+  }
+
+  function exportFileBaseName() {
+    var d = new Date();
+    var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+    return "수영노트_" + d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  // 엑셀(.xlsx)과 텍스트(.txt) 내보내기가 공유하는 표 데이터 — 헤더 행 + 기록 행들의 2차원 배열
+  function buildExportRows(entries) {
+    var sorted = sortByDateAsc(entries || []);
+    var header = ["날짜", "카테고리", "내용", "첨부", "작성일시"];
+    var rows = sorted.map(function (e) {
+      var cat = catById(e.category);
+      return [
+        e.date || "",
+        cat ? cat.name : (e.category || ""),
+        e.text || "",
+        attachmentExportSummary(e.attachments),
+        fmtDateTime(e.createdAt)
+      ];
+    });
+    return [header].concat(rows);
+  }
+
+  // 텍스트(메모장) 내보내기용 — 사람이 읽기 편한 일지 형식
+  function buildExportText(entries) {
+    var sorted = sortByDateAsc(entries || []);
+    var lines = [];
+    lines.push("수영 노트 내보내기 — 총 " + sorted.length + "건");
+    lines.push("");
+    sorted.forEach(function (e) {
+      var cat = catById(e.category);
+      lines.push("====================");
+      lines.push(e.date + " [" + (cat ? cat.name : e.category) + "]");
+      lines.push("--------------------");
+      lines.push(e.text || "");
+      var attSummary = attachmentExportSummary(e.attachments);
+      if (attSummary) lines.push("첨부: " + attSummary);
+      var createdLabel = fmtDateTime(e.createdAt);
+      if (createdLabel) lines.push("작성: " + createdLabel);
+      lines.push("");
+    });
+    return lines.join("\n");
+  }
+
+  // 브라우저에서 텍스트를 파일로 내려받게 만드는 공용 헬퍼 (Blob + 임시 링크 클릭)
+  function downloadTextFile(filename, text) {
+    try {
+      var blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      return true;
+    } catch (e) {
+      window.alert("파일을 만드는 데 실패했습니다.");
+      return false;
+    }
+  }
+
+  function exportToExcel() {
+    var entries = loadEntries();
+    if (!entries.length) {
+      window.alert("내보낼 기록이 없습니다.");
+      return;
+    }
+    if (!window.XLSX) {
+      window.alert("엑셀 내보내기 기능을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해서 다시 시도해주세요.");
+      return;
+    }
+    try {
+      var aoa = buildExportRows(entries);
+      var ws = window.XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = [{ wch: 12 }, { wch: 12 }, { wch: 50 }, { wch: 22 }, { wch: 20 }];
+      var wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, "수영 노트");
+      window.XLSX.writeFile(wb, exportFileBaseName() + ".xlsx");
+    } catch (e) {
+      window.alert("엑셀 파일을 만드는 데 실패했습니다.");
+    }
+  }
+
+  function exportToText() {
+    var entries = loadEntries();
+    if (!entries.length) {
+      window.alert("내보낼 기록이 없습니다.");
+      return;
+    }
+    downloadTextFile(exportFileBaseName() + ".txt", buildExportText(entries));
+  }
+
   // 목록 카드에 표시할 짧은 첨부 요약(아이콘 + 개수) — 종류별 아이콘은 중복 없이 한 번씩만
   function attachmentSummaryTag(entry) {
     var atts = entry.attachments || [];
@@ -1103,6 +1227,12 @@
       el("h1", {}, ["통계"])
     ]));
     main.appendChild(el("div", { class: "view-subtitle" }, ["기록을 남길수록 자동으로 쌓여요"]));
+
+    var exportBtn = el("button", { class: "btn btn-primary export-btn" }, ["📊 엑셀로 내보내기"]);
+    exportBtn.addEventListener("click", exportToExcel);
+    var exportTextBtn = el("button", { class: "btn btn-outline export-btn" }, ["📄 텍스트로 내보내기"]);
+    exportTextBtn.addEventListener("click", exportToText);
+    main.appendChild(el("div", { class: "export-actions" }, [exportBtn, exportTextBtn]));
 
     main.appendChild(el("div", { class: "section-title" }, ["월별 연습 횟수 (영법별)"]));
     if (entries.length === 0) {
@@ -1452,6 +1582,13 @@
     addTombstone: addTombstone,
     replaceAllData: replaceAllData,
     genAttachmentId: genAttachmentId,
-    autoAttachmentText: autoAttachmentText
+    autoAttachmentText: autoAttachmentText,
+    sortByDateAsc: sortByDateAsc,
+    attachmentExportSummary: attachmentExportSummary,
+    buildExportRows: buildExportRows,
+    buildExportText: buildExportText,
+    exportFileBaseName: exportFileBaseName,
+    exportToExcel: exportToExcel,
+    exportToText: exportToText
   };
 })();
